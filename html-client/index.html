@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>One-to-One Chat</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        #chat { width: 300px; height: 400px; border: 1px solid black; overflow-y: scroll; padding: 10px; }
+        #message { width: 200px; }
+    </style>
+</head>
+<body>
+    <h1>One-to-One Chat</h1>
+    <div>
+        <label for="recipient">Recipient:</label>
+        <input type="text" id="recipient">
+    </div>
+    <div id="chat"></div>
+    <input type="text" id="message">
+    <button onclick="sendMessage()">Send</button>
+
+    <script>
+        const userId = prompt("Enter your user ID:");
+        const ws = new WebSocket(`ws://localhost:8080/ws?id=${userId}`);
+        const chat = document.getElementById("chat");
+        const messageInput = document.getElementById("message");
+        const recipientInput = document.getElementById("recipient");
+
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            const div = document.createElement("div");
+            div.textContent = `${msg.sender}: ${msg.text}`;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        };
+
+        function sendMessage() {
+            const message = messageInput.value;
+            const recipient = recipientInput.value;
+            if (message && recipient) {
+                ws.send(JSON.stringify({ receiver: recipient, text: message }));
+                const div = document.createElement("div");
+                div.textContent = `You: ${message}`;
+                chat.appendChild(div);
+                chat.scrollTop = chat.scrollHeight;
+                messageInput.value = "";
+            }
+        }
+    </script>
+</body>
+</html>
