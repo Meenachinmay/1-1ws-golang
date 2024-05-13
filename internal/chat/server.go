@@ -10,7 +10,7 @@ import (
 
 type Server struct {
 	users      map[string]*User
-	broadcast  chan *Message
+	broadcast  chan *EventMessage
 	register   chan *User
 	unregister chan *User
 	mu         sync.Mutex
@@ -19,7 +19,7 @@ type Server struct {
 func NewChatServer() *Server {
 	return &Server{
 		users:      make(map[string]*User),
-		broadcast:  make(chan *Message),
+		broadcast:  make(chan *EventMessage),
 		register:   make(chan *User),
 		unregister: make(chan *User),
 	}
@@ -45,9 +45,42 @@ func (s *Server) Run() {
 
 			case message := <-s.broadcast:
 				s.mu.Lock()
-				if receiver, ok := s.users[message.To]; ok {
-					if err := receiver.Conn.WriteJSON(message); err != nil {
-						fmt.Printf("error sending message to %s: %s\n", message.To, err)
+				msg, ok := message.Data.(*Message)
+				if !ok {
+					s.mu.Unlock()
+					log.Printf("Invalid message received\n")
+					continue
+				}
+
+				receiver, ok := s.users[msg.To]
+				if !ok {
+					// receiver is offline
+					errMsg := &EventMessage{
+						Event: "error",
+						Data: map[string]string{
+							"error": "receiver is offline",
+							"from":  msg.From,
+						},
+					}
+					sender, exist := s.users[msg.From]
+					if exist {
+						err := sender.Conn.WriteJSON(errMsg)
+						if err != nil {
+							fmt.Printf("error sending message to %s: %s\n", msg.From, err)
+						}
+					}
+				} else {
+					// Receiver exists, send the message
+					newMsg := &EventMessage{
+						Event: "new_message",
+						Data: map[string]string{
+							"from":     msg.From,
+							"receiver": msg.To,
+							"text":     msg.Text,
+						},
+					}
+					if err := receiver.Conn.WriteJSON(newMsg); err != nil {
+						fmt.Printf("error sending message to %s: %s\n", msg.To, err)
 					}
 				}
 				s.mu.Unlock()
@@ -78,12 +111,25 @@ func (s *Server) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	for {
-		var msg Message
-		if err := conn.ReadJSON(&msg); err != nil {
+		var eventMessage EventMessage
+		if err := conn.ReadJSON(&eventMessage); err != nil {
 			log.Printf("error reading JSON message from %s: %s\n", user.ID, err)
 			break
 		}
-		msg.From = userID
-		s.broadcast <- &msg
+
+		switch eventMessage.Event {
+		case "new_message":
+			var msg *Message
+			if err := eventMessage.DecodeData(&msg); err != nil {
+				log.Printf("error decoding message from %s: %s\n", user.ID, err)
+				continue
+			}
+
+			msg.From = userID
+			s.broadcast <- &EventMessage{
+				Event: "new_message",
+				Data:  msg,
+			}
+		}
 	}
 }
