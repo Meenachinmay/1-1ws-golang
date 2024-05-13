@@ -32,6 +32,7 @@ func (s *Server) Run() {
 			case user := <-s.register:
 				s.mu.Lock()
 				s.users[user.ID] = user
+				s.broadcastUserList()
 				s.mu.Unlock()
 				fmt.Printf("User %s created\n\n", user.ID)
 
@@ -39,6 +40,7 @@ func (s *Server) Run() {
 				s.mu.Lock()
 				if _, ok := s.users[user.ID]; ok {
 					delete(s.users, user.ID)
+					s.broadcastUserList()
 					fmt.Printf("User %s disconnected\n", user.ID)
 				}
 				s.mu.Unlock()
@@ -87,6 +89,24 @@ func (s *Server) Run() {
 			}
 		}
 	}()
+}
+
+func (s *Server) broadcastUserList() {
+	userList := make([]string, 0, len(s.users))
+	for id := range s.users {
+		userList = append(userList, id)
+	}
+
+	listMessage := &EventMessage{
+		Event: "user_list",
+		Data:  userList,
+	}
+
+	for _, user := range s.users {
+		if err := user.Conn.WriteJSON(listMessage); err != nil {
+			log.Printf("error broadcasting user list: %s\n", err)
+		}
+	}
 }
 
 func (s *Server) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
