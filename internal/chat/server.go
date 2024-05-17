@@ -11,6 +11,7 @@ import (
 type Server struct {
 	users      map[string]*User
 	broadcast  chan *EventMessage
+	postNotify chan *EventMessage
 	register   chan *User
 	unregister chan *User
 	mu         sync.Mutex
@@ -20,6 +21,7 @@ func NewChatServer() *Server {
 	return &Server{
 		users:      make(map[string]*User),
 		broadcast:  make(chan *EventMessage),
+		postNotify: make(chan *EventMessage),
 		register:   make(chan *User),
 		unregister: make(chan *User),
 	}
@@ -86,6 +88,46 @@ func (s *Server) Run() {
 					}
 				}
 				s.mu.Unlock()
+
+			case notification := <-s.postNotify:
+				s.mu.Lock()
+				msg, ok := notification.Data.(*Message)
+				if !ok {
+					s.mu.Unlock()
+					log.Printf("Invalid message received\n")
+					continue
+				}
+
+				receiver, ok := s.users[msg.To]
+				if !ok {
+					errMsg := &EventMessage{
+						Event: "error",
+						Data: map[string]string{
+							"error": "receiver is offline",
+							"from":  msg.From,
+						},
+					}
+					sender, exist := s.users[msg.From]
+					if exist {
+						err := sender.Conn.WriteJSON(errMsg)
+						if err != nil {
+							fmt.Printf("error sending message to %s: %s\n", msg.To, err)
+						}
+					}
+				} else {
+					newNotification := &EventMessage{
+						Event: "notify_user_about_post",
+						Data: map[string]string{
+							"from":     msg.From,
+							"receiver": msg.To,
+							"text":     msg.Text,
+						},
+					}
+					if err := receiver.Conn.WriteJSON(newNotification); err != nil {
+						fmt.Printf("error sending notification to %s: %s\n", msg.To, err)
+					}
+				}
+				s.mu.Unlock()
 			}
 		}
 	}()
@@ -139,6 +181,7 @@ func (s *Server) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 
 		switch eventMessage.Event {
 		case "new_message":
+			fmt.Println("new message event received.")
 			var msg *Message
 			if err := eventMessage.DecodeData(&msg); err != nil {
 				log.Printf("error decoding message from %s: %s\n", user.ID, err)
@@ -148,6 +191,20 @@ func (s *Server) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 			msg.From = userID
 			s.broadcast <- &EventMessage{
 				Event: "new_message",
+				Data:  msg,
+			}
+
+		case "notify_user_about_post":
+			fmt.Println("notify event received.")
+			var msg *Message
+			if err := eventMessage.DecodeData(&msg); err != nil {
+				log.Printf("error decoding message from %s: %s\n", user.ID, err)
+				continue
+			}
+
+			msg.From = userID
+			s.postNotify <- &EventMessage{
+				Event: "notify_user_about_post",
 				Data:  msg,
 			}
 		}
