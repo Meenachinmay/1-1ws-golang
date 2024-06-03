@@ -3,11 +3,13 @@ package chat
 import (
 	"encoding/json"
 	"github.com/gorilla/websocket"
+	"sync"
 )
 
 type User struct {
 	ID   string
 	Conn *websocket.Conn
+	mu   sync.Mutex
 }
 
 type EventMessage struct {
