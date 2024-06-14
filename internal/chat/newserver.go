@@ -242,6 +242,8 @@ func (s *Server) broadcastToAll(event, message string) {
 }
 
 func (s *Server) broadcastUserList() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	userList := make([]string, 0)
 
 	// Collect all user IDs from the sync.Map
